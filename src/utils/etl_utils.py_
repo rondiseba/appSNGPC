@@ -1,0 +1,179 @@
+# src/utils/etl_utils.py
+import pandas as pd
+import numpy as np
+import re
+from .database_utils import get_duckdb_connection, TABLE_MAPEAMENTO
+
+def padronizar_nomes_colunas(df):
+    """Padroniza os nomes das colunas de um DataFrame."""
+    df.columns = [col.lower().strip().replace(' ', '_') for col in df.columns]
+    print("Nomes das colunas padronizados.")
+    return df
+
+def padronizar_principio_ativo(df):
+    """Padroniza a coluna de princípio ativo de forma avançada."""
+    print("Padronizando princípios ativos (avançado)...")
+    if 'principio_ativo' in df.columns:
+        pa_series = df['principio_ativo'].astype(str).str.strip().str.upper()
+        termos = [
+            'CLORIDRATO DE', 'BROMIDRATO DE', 'FOSFATO DE', 'ACETATO DE', 'DECANOATO DE',
+            'NITRATO DE', 'HEMISSULFATO DE', 'SUCCINATO DE', 'MALEATO DE', 'MESILATO DE',
+            'VALERATO DE', 'ESILATO DE', 'CIPIONATO DE', 'TRI-HIDRATADO', 'TRIHIDRATADA',
+            'MONOIDRATADO', 'DI-HIDRATADO', 'ANIDRO', r'\(PORT\. 344/98 LISTA C 1\)'
+        ]
+        regex_pattern = '|'.join(termos)
+        pa_series = pa_series.str.replace(regex_pattern, ' ', regex=True)
+        pa_series = pa_series.str.replace(r'\s*\+\s*', ' + ', regex=True)
+        pa_series = pa_series.str.replace(r'\s+', ' ', regex=True).str.strip()
+        df['principio_ativo'] = pa_series
+    return df
+
+def tratar_valores_idade(df):
+    """Trata valores ausentes e outliers na coluna 'idade'."""
+    print("Tratando valores de 'idade'...")
+    if 'idade' not in df.columns: return df
+    df['idade'] = pd.to_numeric(df['idade'], errors='coerce')
+    media_idade = df['idade'].mean()
+    condicao = (df['idade'].isna()) | (df['idade'] < 0) | (df['idade'] > 110)
+    df['idade_modificada_flag'] = np.where(condicao, 1, 0)
+    df.loc[condicao, 'idade'] = media_idade
+    df['idade'] = df['idade'].round().astype('Int64')
+    return df
+
+def tratar_valores_quantidade(df):
+    """Trata valores negativos e outliers na coluna 'quantidade_vendida'."""
+    print("Tratando valores de 'quantidade_vendida'...")
+    if 'quantidade_vendida' not in df.columns: return df
+    df['quantidade_vendida'] = pd.to_numeric(df['quantidade_vendida'], errors='coerce')
+    df['quantidade_modificada_flag'] = 0
+    condicao_negativa = df['quantidade_vendida'] < 0
+    if condicao_negativa.any():
+        df.loc[condicao_negativa, 'quantidade_modificada_flag'] = 1
+        df.loc[condicao_negativa, 'quantidade_vendida'] = df.loc[condicao_negativa, 'quantidade_vendida'].abs()
+    
+    # Preenche valores NaN com a mediana ANTES de calcular outliers
+    if df['quantidade_vendida'].isnull().any():
+        median_val = df['quantidade_vendida'].median()
+        print(f"Preenchendo NaNs em 'quantidade_vendida' com a mediana: {median_val:.2f}")
+        df['quantidade_vendida'] = df['quantidade_vendida'].fillna(median_val)
+
+    Q1 = df['quantidade_vendida'].quantile(0.25)
+    Q3 = df['quantidade_vendida'].quantile(0.75)
+    IQR = Q3 - Q1
+    limite_superior = Q3 + 1.5 * IQR
+    print(f"Limite superior para outliers de quantidade vendida (IQR): {limite_superior:.2f}")
+    condicao_outlier = df['quantidade_vendida'] > limite_superior
+    if condicao_outlier.any():
+        df.loc[condicao_outlier, 'quantidade_modificada_flag'] = 1
+        df.loc[condicao_outlier, 'quantidade_vendida'] = limite_superior
+    return df
+
+def criar_coluna_data(df):
+    """Cria uma coluna de data a partir do ano e mês no formato YYYY-MM-DD."""
+    print("Criando coluna 'data'...")
+    if 'ano' in df.columns and 'mes' in df.columns:
+        df['data'] = pd.to_datetime(
+            df['ano'].astype(str) + '-' + df['mes'].astype(str) + '-01', 
+            errors='coerce'
+        ).dt.strftime('%Y-%m-%d')
+    return df
+
+def classificar_faixa_etaria(df):
+    """Classifica a idade em grupos demográficos detalhados."""
+    print("Classificando faixa etária...")
+    if 'idade' in df.columns:
+        df['idade_temp'] = pd.to_numeric(df['idade'], errors='coerce')
+        bins = [-1, 14, 24, 59, 64, 120]
+        labels = ["Criança (0-14)", "Jovem Adulto (15-24)", "Adulto (25-59)", "Idoso (60-64)", "Idoso (65+)"]
+        df['faixa_etaria'] = pd.cut(df['idade_temp'], bins=bins, labels=labels, right=True)
+        df['faixa_etaria'] = df['faixa_etaria'].cat.add_categories('Desconhecida').fillna('Desconhecida')
+        df.drop(columns=['idade_temp'], inplace=True)
+    return df
+
+def mapear_municipios(df):
+    """Mapeia o ID do município para o nome da capital correspondente."""
+    print("Mapeando municípios (capitais)...")
+    if 'id_municipio' in df.columns:
+        codigos_capitais = {
+            120040: 'Rio Branco', 270430: 'Maceió', 160030: 'Macapá', 130260: 'Manaus',
+            292740: 'Salvador', 230440: 'Fortaleza', 530010: 'Brasília', 320530: 'Vitória',
+            520870: 'Goiânia', 211130: 'São Luís', 510340: 'Cuiabá', 500270: 'Campo Grande',
+            310620: 'Belo Horizonte', 150140: 'Belém', 250750: 'João Pessoa', 410690: 'Curitiba',
+            261160: 'Recife', 221100: 'Teresina', 330455: 'Rio de Janeiro', 240810: 'Natal',
+            431490: 'Porto Alegre', 110020: 'Porto Velho', 140010: 'Boa Vista', 420540: 'Florianópolis',
+            355030: 'São Paulo', 280030: 'Aracaju', 172100: 'Palmas'
+        }
+        df['nome_municipio'] = df['id_municipio'].map(codigos_capitais)
+        df['nome_municipio'] = df['nome_municipio'].fillna('Outros')
+    return df
+
+def tratar_colunas_categoricas(df):
+    """Preenche valores ausentes em colunas categóricas importantes."""
+    print("Tratando valores ausentes em colunas categóricas (sexo, cid10)...")
+    if 'sexo' in df.columns:
+        df['sexo'] = df['sexo'].astype(str).replace({'nan': 'Não Informado', '1.0': 'Masculino', '2.0': 'Feminino'})
+    if 'cid10' in df.columns:
+        df['cid10'] = df['cid10'].fillna('Não Informado')
+    return df
+
+def enriquecer_com_mapeamento_controlados(df, df_mapeamento):
+    """
+    Enriquece o DataFrame de dados com informações do DataFrame de mapeamento.
+    """
+    print("  - Enriquecendo lote com mapeamento de controlados...")
+    try:
+        if df_mapeamento.empty:
+            print("    ... AVISO: DataFrame de mapeamento está vazio. Pulando enriquecimento.")
+            return df
+
+        # A lógica de merge agora usa o df_mapeamento que foi passado como argumento.
+        # Não há mais conexão com o banco de dados dentro desta função.
+        
+        # Garante que as colunas de data no df_mapeamento já estejam no formato datetime para a junção
+        # (Isso idealmente é feito uma vez quando o df_mapeamento é carregado no script principal)
+        if not pd.api.types.is_datetime64_any_dtype(df_mapeamento['inclusao_lista']):
+            df_mapeamento['inclusao_lista'] = pd.to_datetime(df_mapeamento['inclusao_lista'], errors='coerce', dayfirst=True)
+        if not pd.api.types.is_datetime64_any_dtype(df_mapeamento['exclusao_lista']):
+            df_mapeamento['exclusao_lista'] = pd.to_datetime(df_mapeamento['exclusao_lista'], errors='coerce', dayfirst=True)
+
+        # A chave de junção 'principio_ativo' já foi padronizada em ambos os DFs
+        df_enriquecido = pd.merge(df, df_mapeamento, on='principio_ativo', how='left', suffixes=('', '_mapa'))
+        
+        # Renomeia a coluna 'lista' para ser mais descritiva
+        if 'lista' in df_enriquecido.columns:
+            df_enriquecido.rename(columns={'lista': 'anvisa_lista'}, inplace=True)
+        
+        # Lógica de validação do período
+        data_prescricao = pd.to_datetime(df_enriquecido['data'], errors='coerce')
+        cond1 = data_prescricao >= df_enriquecido['inclusao_lista']
+        cond2 = df_enriquecido['exclusao_lista'].isna() | (data_prescricao <= df_enriquecido['exclusao_lista'])
+        df_enriquecido['periodo_valido_controlado'] = np.where(df_enriquecido['inclusao_lista'].notna(), cond1 & cond2, False)
+
+        # Remove colunas desnecessárias que podem ter vindo do merge
+        df_enriquecido.drop(columns=[col for col in ['principio_ativo_mapa', 'dcb'] if col in df_enriquecido.columns], errors='ignore', inplace=True)
+        
+        return df_enriquecido
+    except Exception as e:
+        print(f"    ... ERRO durante enriquecimento com mapeamento: {e}")
+        # Retorna o df original para não quebrar o pipeline, mas as colunas de enriquecimento estarão ausentes
+        return df
+
+def extrair_features_de_apresentacao(df):
+    """Extrai Dosagem e Forma Farmacêutica da coluna 'descricao_apresentacao'."""
+    print("Iniciando engenharia de features a partir de 'descricao_apresentacao'...")
+    if 'descricao_apresentacao' not in df.columns: return df
+    
+    regex_dosagem = r'(\d+\.?\d*\s?(?:MG/ML|MG/G|MG|MCG|UI|G|ML))'
+    df['dosagem'] = df['descricao_apresentacao'].astype(str).str.extract(regex_dosagem, flags=re.IGNORECASE, expand=False)
+    df['dosagem'] = df['dosagem'].fillna('Não Especificada')
+
+    mapa_forma = {
+        'COM REV': 'Comprimido Revestido', 'COMP REV': 'Comprimido Revestido', 'COMP': 'Comprimido',
+        'CAP': 'Cápsula', 'CAPS': 'Cápsula', 'SOL OR': 'Solução Oral', 'SOL': 'Solução',
+        'GTS': 'Gotas', 'XPE': 'Xarope', 'CREM': 'Creme', 'POM': 'Pomada',
+        'SUSP': 'Suspensão', 'INJ': 'Injetável'
+    }
+    regex_forma = r'(' + '|'.join(mapa_forma.keys()) + r')'
+    extracted_form = df['descricao_apresentacao'].astype(str).str.extract(regex_forma, flags=re.IGNORECASE, expand=False)
+    df['forma_farmaceutica'] = extracted_form.map(mapa_forma).fillna('Não Especificada')
+    return df

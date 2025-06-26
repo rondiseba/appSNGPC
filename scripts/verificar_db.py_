@@ -1,0 +1,107 @@
+# scripts/auditoria_etl.py
+# Este script unifica as funcionalidades de verificação e auditoria pós-ETL.
+
+import logging
+from pathlib import Path
+import duckdb
+import pandas as pd
+import sys
+
+# Adiciona a pasta raiz ao caminho do Python
+project_root = Path(__file__).resolve().parent.parent
+sys.path.append(str(project_root))
+
+from src.utils.database_utils import DUCKDB_FILE_PATH, TABLE_NAME, TABLE_MAPEAMENTO, TABLE_ATC, TABLE_MUNICIPIOS
+
+# Configuração do logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
+)
+log = logging.getLogger(__name__)
+
+def auditar_tabela_final(conexao, tabela):
+    """Realiza uma auditoria detalhada da tabela final (prescricoes)."""
+    log.info(f"\n--- Iniciando Auditoria Detalhada da Tabela: '{tabela}' ---")
+    
+    try:
+        total_rows = conexao.execute(f"SELECT COUNT(*) FROM {tabela};").fetchone()[0]
+        print(f"\nTotal de Registros na Tabela '{tabela}': {total_rows:,}")
+
+        print("\nEstrutura da Tabela (Schema):")
+        schema_df = conexao.execute(f"DESCRIBE {tabela};").fetchdf()
+        print(schema_df.to_string())
+
+        print("\nRelatório de Qualidade (Contagem de Valores Não-Nulos):")
+        colunas = schema_df['column_name'].tolist()
+        summaries = []
+        for col in colunas:
+            non_null_count = conexao.execute(f'SELECT COUNT("{col}") FROM {tabela} WHERE "{col}" IS NOT NULL;').fetchone()[0]
+            summaries.append({
+                "Coluna": col,
+                "Registros Preenchidos": f"{non_null_count:,}",
+                "% Preenchido": f"{(non_null_count / total_rows * 100):.2f}%" if total_rows > 0 else "0.00%"
+            })
+        summary_df = pd.DataFrame(summaries)
+        print(summary_df.to_string(index=False))
+
+    except Exception as e:
+        log.error(f"Falha na auditoria detalhada da tabela '{tabela}': {e}")
+
+
+def auditar_tabela_mapeamento(conexao, tabela, relatorio_dir, n=5):
+    """Realiza uma auditoria simples em tabelas de mapeamento, salvando amostras."""
+    log.info(f"\n--- Iniciando Auditoria da Tabela de Mapeamento: '{tabela}' ---")
+    
+    try:
+        df = conexao.execute(f"SELECT * FROM {tabela} LIMIT {n}").df()
+        stats = conexao.execute(f"SELECT COUNT(*) as total_linhas FROM {tabela}").df()
+
+        log.info(f"Amostra da tabela '{tabela}':")
+        print(df)
+        log.info(f"Total de linhas: {stats['total_linhas'][0]}")
+
+        # Salva amostra em CSV
+        df.to_csv(relatorio_dir / f"{tabela}_amostra.csv", index=False)
+        stats.to_csv(relatorio_dir / f"{tabela}_stats.csv", index=False)
+    
+    except Exception as e:
+        log.error(f"Falha na auditoria da tabela de mapeamento '{tabela}': {e}")
+
+
+def executar_auditoria_completa(relatorio_dir="dados/relatorios_etl"):
+    """
+    Executa a auditoria completa: uma análise detalhada da tabela final e uma
+    análise simples das tabelas de mapeamento.
+    """
+    log.info("--- INICIANDO AUDITORIA COMPLETA PÓS-ETL NO BANCO DE DADOS ---")
+    relatorio_path = Path(relatorio_dir)
+    relatorio_path.mkdir(parents=True, exist_ok=True)
+    
+    conexao = None
+    try:
+        conexao = duckdb.connect(database=str(DUCKDB_FILE_PATH), read_only=True)
+        log.info(f"Conexão de auditoria estabelecida com: {DUCKDB_FILE_PATH}")
+        
+        # 1. Auditoria detalhada da tabela principal
+        auditar_tabela_final(conexao, TABLE_NAME)
+        
+        # 2. Auditoria simples das tabelas de mapeamento
+        tabelas_mapeamento = [TABLE_MAPEAMENTO, TABLE_ATC, TABLE_MUNICIPIOS]
+        for tabela in tabelas_mapeamento:
+            auditar_tabela_mapeamento(conexao, tabela, relatorio_path)
+
+    except Exception as e:
+        log.error(f"Ocorreu um erro geral durante a auditoria: {e}")
+    finally:
+        if conexao is not None:
+            conexao.close()
+            log.info("Conexão de auditoria com DuckDB fechada.")
+    
+    log.info("--- AUDITORIA PÓS-ETL CONCLUÍDA ---")
+    log.info(f"Relatórios de amostra exportados para: {relatorio_path.resolve()}")
+
+if __name__ == "__main__":
+    executar_auditoria_completa()
+

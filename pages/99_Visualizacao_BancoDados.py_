@@ -1,0 +1,99 @@
+# pages/99_Inspecao_Arquivos_Grandes.py
+import streamlit as st
+import pandas as pd
+from pathlib import Path
+import io
+
+# Define o número de linhas a serem visualizadas
+N_ROWS_TO_VIEW = 20 # Você pode ajustar este valor
+
+# Caminhos para os arquivos (relativos à raiz do projeto)
+BASE_DIR = Path(__file__).resolve().parent.parent # Assume que pages/ está um nível abaixo da raiz
+PASTA_DADOS = BASE_DIR / "dados"
+PASTA_DADOS_ORIGINAIS = PASTA_DADOS / "Dados_Originais"
+
+# Lista dos principais arquivos a serem inspecionados
+ARQUIVOS_PRINCIPAIS = {
+    "Consolidado Bruto (SNGPC)": PASTA_DADOS / "Dados_Brutos_SNGPC.csv",
+    "Dados Processados (ETL)": PASTA_DADOS / "dados_processados.csv",
+    "Anomalias Detectadas": PASTA_DADOS / "anomalias_detectadas.csv",
+    "Dados Clusterizados": PASTA_DADOS / "dados_clusterizados.csv",
+}
+
+def display_csv_preview(file_path: Path, file_label: str, n_rows: int):
+    """
+    Lê e exibe as primeiras N linhas de um arquivo CSV, suas colunas e df.info().
+    """
+    st.subheader(f"Pré-visualização de: `{file_label}`")
+    st.caption(f"Arquivo: `{file_path.name}`")
+
+    if not file_path.exists():
+        st.warning(f"Arquivo não encontrado em: {file_path}")
+        # Adicionar um pequeno espaço para melhor separação visual
+        st.markdown("---")
+        return
+
+    try:
+        st.markdown(f"**Carregando as primeiras {n_rows} linhas...**")
+        # Tentar inferir delimitador comum, mas CSVs geralmente são vírgula
+        try:
+            df_sample = pd.read_csv(file_path, nrows=n_rows, sep=',')
+        except pd.errors.ParserError:
+            try:
+                st.info("Tentando com delimitador ';'...")
+                df_sample = pd.read_csv(file_path, nrows=n_rows, sep=';')
+            except Exception as e_parse:
+                st.error(f"Não foi possível parsear o CSV {file_path.name}. Erro: {e_parse}")
+                st.markdown("---")
+                return
+        
+        st.markdown(f"**Primeiras {min(n_rows, len(df_sample))} linhas:**")
+        st.dataframe(df_sample)
+        
+        st.markdown("**Nomes das Colunas:**")
+        st.write(df_sample.columns.tolist())
+        
+        st.markdown(f"**Informações do DataFrame (baseado nas primeiras {n_rows} linhas):**")
+        buffer = io.StringIO()
+        df_sample.info(buf=buffer)
+        s = buffer.getvalue()
+        st.text(s)
+        
+    except Exception as e:
+        st.error(f"Erro ao ler ou processar o arquivo {file_path.name}: {e}")
+    
+    st.markdown("---")
+
+# --- Início da Página de Inspeção ---
+st.set_page_config(page_title="Inspeção de Arquivos", layout="wide", page_icon="📄")
+st.title("📄 Inspeção das Linhas Iniciais de Arquivos CSV")
+st.caption(f"Esta página exibe as primeiras {N_ROWS_TO_VIEW} linhas dos arquivos CSV para análise rápida.")
+st.markdown("---")
+
+# Abas para organizar a visualização
+tab_principais, tab_brutos_individuais = st.tabs(["Arquivos Principais/Processados", "Arquivos Brutos Individuais"])
+
+with tab_principais:
+    for label, path in ARQUIVOS_PRINCIPAIS.items():
+        display_csv_preview(path, label, N_ROWS_TO_VIEW)
+
+with tab_brutos_individuais:
+    st.write(f"Tentando carregar arquivos de `{PASTA_DADOS_ORIGINAIS}`...")
+    if not PASTA_DADOS_ORIGINAIS.exists() or not PASTA_DADOS_ORIGINAIS.is_dir():
+        st.warning(f"Pasta de dados originais não encontrada em: {PASTA_DADOS_ORIGINAIS}")
+    else:
+        arquivos_brutos_encontrados = 0
+        for i in range(1, 10): # Conforme o script mesclar_Dados_Brutos.py (Dados_Brutos1.csv a Dados_Brutos9.csv)
+            nome_arquivo_bruto = f"Dados_Brutos{i}.csv"
+            caminho_arquivo_bruto = PASTA_DADOS_ORIGINAIS / nome_arquivo_bruto
+            display_csv_preview(caminho_arquivo_bruto, f"Bruto Individual {i}", N_ROWS_TO_VIEW)
+            if caminho_arquivo_bruto.exists():
+                arquivos_brutos_encontrados +=1
+        if arquivos_brutos_encontrados == 0:
+            st.info("Nenhum arquivo 'Dados_BrutosX.csv' encontrado na pasta de dados originais.")
+
+
+st.sidebar.info(
+    "Esta é uma página de utilidade para desenvolvedores inspecionarem "
+    "o início de arquivos de dados grandes."
+)

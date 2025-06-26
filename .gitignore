@@ -1,0 +1,45 @@
+# Ambientes Virtuais do Python
+.venv/
+venv/
+env/
+tcc_env/
+
+# Arquivos de Cache e compilados do Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Arquivos de Sistema (macOS, Linux, Windows)
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Checkpoints do Jupyter Notebook
+.ipynb_checkpoints/
+
+# Banco de dados DuckDB
+*.duckdb
+*.duckdb.wal
+
+# Arquivos de configuração sensíveis
+config.yaml
+.env
+
+# Pastas de output e relatórios gerados
+dados/relatorios_etl/
+
+# Arquivos de dados brutos e CSVs grandes
+dados/dados_Originais/
+*.csv
+
+# Arquivos temporários ou de backup
+*~
+*.swp
+*.swo
+*._*
+*.csv-
+
+# Arquivos de IDEs
+.idea/
+.vscode/

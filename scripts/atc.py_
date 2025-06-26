@@ -1,0 +1,26 @@
+import pandas as pd
+from pathlib import Path
+
+# Defina os caminhos relativos
+pasta_dados = Path(__file__).parent.parent / "dados"
+entrada = pasta_dados / "mapeamento_Controlados.csv"
+saida = pasta_dados / "mapeamento_Controlados_ATC_final.csv"
+
+# Carregue o arquivo original
+df = pd.read_csv(entrada)
+
+# Dicionário de mapeamento exemplo (adicione todos os princípios ativos conforme necessário)
+mapeamento = {
+    'AMITRIPTILINA': ('N06AA09', 'Antidepressivo'),
+    'AMOXICILINA': ('J01CA04', 'Antimicrobiano'),
+    'AZITROMICINA': ('J01FA10', 'Antimicrobiano'),
+    # ... continue para todos os princípios ativos ...
+}
+
+def buscar_info(principio):
+    return mapeamento.get(principio.upper(), ('N/A', 'N/A'))
+
+df[['codigo_atc', 'classe_terapeutica']] = df['principio_ativo'].apply(lambda x: pd.Series(buscar_info(x)))
+
+# Salve o novo arquivo na pasta dados
+df.to_csv(saida, index=False)
