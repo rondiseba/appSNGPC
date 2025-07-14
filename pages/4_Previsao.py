@@ -1,4 +1,4 @@
-# pages/4_Previsao.py
+# Pagina para previsão de séries temporais usando ARIMA
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go

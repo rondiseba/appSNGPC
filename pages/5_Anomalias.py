@@ -1,11 +1,10 @@
-# pages/5_Anomalias.py
+# Pagina para Detecção de Anomalias com Isolation Forest
+# Baseado no modelo de previsão de séries temporais
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import numpy as np
 from sklearn.ensemble import IsolationForest
-
-# --- Novas Importações dos Módulos de Utilitários ---
 from src.utils.database_utils import get_duckdb_connection, carregar_opcoes_previsao, TABLE_NAME
 
 # --- Funções Específicas da Página (Busca de dados e Modelagem) ---

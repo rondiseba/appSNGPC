@@ -1,4 +1,4 @@
-# pages/2_Estatistica.py
+# Pagina para analise estatistca e graficos descritivos
 import streamlit as st
 import pandas as pd
 import numpy as np

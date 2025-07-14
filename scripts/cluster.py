@@ -1,4 +1,5 @@
-
+# Este script é responsável por carregar os dados processados e realizar a clusterização das prescrições médicas.
+# Ele utiliza o algoritmo KMeans para agrupar prescrições com base em características como quantidade vend
 import sys
 import os
 import pandas as pd
